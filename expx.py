@@ -38,6 +38,13 @@ class LoginResult:
 class RegisterResult:
     success: bool = False
     message: str = ""
+    
+
+@dataclass
+class LoginLicenseResult:
+    success: bool = False
+    message: str = ""
+    user: Optional[UserData] = None
 
 
 class EXPX:
@@ -121,6 +128,47 @@ class EXPX:
             return result
         except Exception as exc:
             self.response_message = str(exc) or "Login failed"
+            result.message = self.response_message
+            return result
+            
+    def login_license(self, license_key: str) -> LoginLicenseResult:
+        result = LoginLicenseResult()
+        if not self.is_initialized:
+            self.response_message = "Error: Call EXPX.Init() first"
+            result.message = self.response_message
+            return result
+
+        if not license_key or not license_key.strip():
+            self.response_message = "Error: License key cannot be empty"
+            result.message = self.response_message
+            return result
+
+        try:
+            # Menembak endpoint loginlicense sesuai modifikasi backend Hono
+            response = self._send_request("loginlicense", {
+                "licenseKey": license_key.strip(),
+                "secret": self.secret,
+                "appName": self.app_name,
+                "appVersion": self.version,
+                "hwid": self._get_hwid()
+            })
+
+            if not response.success:
+                self.response_message = self._format_error_message(response.message, "loginlicense")
+                result.message = self.response_message
+                return result
+
+            # Jika berhasil, backend mengembalikan detail user (virtual/terdaftar)
+            self.is_logged_in = True
+            self.user = UserData(response.username, response.subscription, response.expiry)
+            self.response_message = f"Login successful! License verified. Welcome, {self.user.username}"
+            
+            result.success = True
+            result.message = self.response_message
+            result.user = self.user
+            return result
+        except Exception as exc:
+            self.response_message = str(exc) or "License login failed"
             result.message = self.response_message
             return result
 
@@ -350,6 +398,15 @@ class EXPX:
                 return "License key has already been used"
             if "LICENSE_EXPIRED" in upper_msg:
                 return "License key has expired"
+        if operation == "loginlicense":
+            if "LICENSE_NOT_FOUND" in upper_msg:
+                return "License key not found or invalid"
+            if "USER_BANNED" in upper_msg:
+                return "The user associated with this license is banned"
+            if "HWID_MISMATCH" in upper_msg:
+                return "HWID mismatch. Please reset your HWID via dashboard"
+            if "LICENSE_EXPIRED" in upper_msg:
+                return "This license has expired"
         return f"{operation} failed: {error_message}"
 
     def _show_error(self, title: str, message: str):
